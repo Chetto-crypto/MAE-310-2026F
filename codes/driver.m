@@ -33,7 +33,7 @@ ID = 1 : n_np;
 ID(end) = 0;
 
 % allocate zero matrix and zero vector
-K = zeros(n_eq, n_eq);
+K = spalloc(n_eq, n_eq, min(n_eq^2, (2*pp + 1)*n_eq));
 F = zeros(n_eq, 1);
 
 for ee = 1 : n_el
@@ -85,32 +85,50 @@ uh_temp = K \ F; % solve K uh = F linear system
 
 uh = [uh_temp; g];
 
-% calculate the L2 and H1 errors
+% calculate relative L2, H1 seminorm, and full H1 errors
 n_int = 6;
 [xi, weight] = Gauss(n_int, -1, 1);
 
-top = 0.0; bot = 0.0;
+errL2sq = 0.0; normL2sq = 0.0;
+errH1semiSq = 0.0; normH1semiSq = 0.0;
 for ee = 1 : n_el
     x_ele(:) = x_coor(IEN(:,ee));
     u_ele(:) = uh(IEN(:,ee));
 
     for ll = 1 : n_int
-        x = 0.0; dx_dxi = 0.0; uh = 0.0;
+        x = 0.0; dx_dxi = 0.0;
+        uh_q = 0.0; duh_dxi = 0.0;
         for aa = 1 : n_en
-            x      = x      + x_ele(aa) * PolyShape(pp, aa, xi(ll), 0);
-            dx_dxi = dx_dxi + x_ele(aa) * PolyShape(pp, aa, xi(ll), 1);
-            uh     = uh     + u_ele(aa) * PolyShape(pp, aa, xi(ll), 0);
+            N = PolyShape(pp, aa, xi(ll), 0);
+            dN_dxi = PolyShape(pp, aa, xi(ll), 1);
+            x = x + x_ele(aa) * N;
+            dx_dxi = dx_dxi + x_ele(aa) * dN_dxi;
+            uh_q = uh_q + u_ele(aa) * N;
+            duh_dxi = duh_dxi + u_ele(aa) * dN_dxi;
         end
-        dxi_dx = 1.0 / dx_dxi;
+        duh_q = duh_dxi / dx_dxi;
+        dV = weight(ll) * dx_dxi;
+        u_exact = exact(x);
+        du_exact = exact_x(x);
 
-        top = top + weight(ll) * (uh - exact(x))^2 * dx_dxi;
-        bot = bot + weight(ll) * (exact_x(x))^2 * dx_dxi;
+        errL2sq = errL2sq + (uh_q - u_exact)^2 * dV;
+        normL2sq = normL2sq + u_exact^2 * dV;
+        errH1semiSq = errH1semiSq + (duh_q - du_exact)^2 * dV;
+        normH1semiSq = normH1semiSq + du_exact^2 * dV;
     end
 end
 
-top = sqrt(top);
-bot = sqrt(bot);
+% Relative errors require nonzero exact-solution norms.
+assert(normL2sq > 0, 'Relative L2 error requires a nonzero exact-solution norm.');
+assert(normH1semiSq > 0, ...
+    'Relative H1 seminorm error requires a nonzero exact-derivative norm.');
 
-eL2 = top / bot;
+eL2 = sqrt(errL2sq / normL2sq);
+eH1semi = sqrt(errH1semiSq / normH1semiSq);
+eH1 = sqrt((errL2sq + errH1semiSq) / (normL2sq + normH1semiSq));
+
+fprintf('Relative L2 error: %.6e\n', eL2);
+fprintf('Relative H1 seminorm error: %.6e\n', eH1semi);
+fprintf('Relative H1 error: %.6e\n', eH1);
 
 % EOF
